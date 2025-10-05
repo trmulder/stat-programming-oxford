@@ -1,6 +1,6 @@
 # Statistical Programming Practical (Oxford)
 
-This repository contains material for the MSc Statistical Programming Practical 2024 at the University of Oxford. It includes the R Markdown source, LaTeX output, data files, and supporting figures used to complete the assessed practical (project code P468).
+This repository contains material for the MSc Statistical Programming Practical 2024 at the University of Oxford. It includes the R Markdown source, LaTeX output, data files, and supporting figures used to complete the assessed practical.
 
 ## Repository structure
 
