@@ -1,0 +1,939 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[onehalfspacing]{setspace}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks = true, 
+    citecolor = blue, 
+    linkcolor = blue, 
+    filecolor = blue, 
+    urlcolor = blue
+}
+\newcommand{\code}[1]{\texttt{#1}}
+\usepackage[margin=2.5cm]{geometry} 
+\usepackage{float}
+\usepackage{caption}
+\captionsetup[table]{justification=justified, labelfont={bf}, singlelinecheck=false, font={normal, stretch=1}, format=plain, labelsep=newline, skip=2pt}
+\captionsetup[figure]{justification=justified, labelfont={bf}, font={normal, stretch=1}, format=plain}
+
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{colortbl}
+\usepackage{pdflscape}
+\usepackage{tabu}
+\usepackage{threeparttable}
+\usepackage{threeparttablex}
+\usepackage[normalem]{ulem}
+\usepackage{makecell}
+\usepackage{xcolor}
+
+\author{P468}
+\title{MSc Statistical Programming 2024}
+
+
+\begin{document}
+
+\maketitle
+
+
+
+\section{U.K. House Prices}
+
+\begin{enumerate}
+
+<<read_uk_house_price_data, echo = FALSE, message = FALSE, warning = FALSE>>=
+options(scipen = 999)
+suppressPackageStartupMessages(library(knitr))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(testthat))
+suppressPackageStartupMessages(library(kableExtra))
+suppressPackageStartupMessages(library(microbenchmark))
+suppressPackageStartupMessages(library(ggbeeswarm))
+suppressPackageStartupMessages(library(parallel))
+suppressPackageStartupMessages(library(Rcpp))
+
+theme_set(theme_bw())
+
+cbPalette <- c(
+    "#999999", "#E69F00", "#56B4E9", "#009E73",
+    "#D55E00", "#0072B2", "#F0E442", "#CC79A7"
+)
+
+house_data <- read_csv("Average-prices-2024-07.csv", progress = FALSE)
+@
+
+
+
+
+\item In Figure \ref{fig:plot_price_countries}, we plot the average house price for the four nations: England, Northern Ireland, Scotland and Wales. We observe that the average house price is currently the highest in England, followed by Wales, Scotland and Northern Ireland. Besides that, when looking further back in time, we observe that this ordering has been relatively stable over time. One exception is maybe between 2000 and 2008. During this period, the average house prices in all four countries rose rapidly, but especially those in Northern Ireland. This led to a climax in the years before 2008, when the house prices in Norther Ireland were on average even larger than those in England. Interestingly, the apparent bubble in the Irish housing market collapsed in 2008, since the average house price declined drastically. This is also known as the Irish property bubble and marks the end of the so-called \textit{Celtic Tiger}.
+
+<<plot_price_countries, echo = FALSE, fig.height = 4, fig.width = 7, warning = FALSE, message = FALSE, fig.cap = "Average house price for England, Scotland, Wales, and Northern Ireland", fig.pos = "H", fig.align = "center", out.width = '80%'>>=
+get_house_price_plot <- function(
+    data, 
+    lwd = 0.7, 
+    date_breaks = "10 years", 
+    legend_position = c(0.12, 0.79)
+) {
+  p <- ggplot(
+    data = data, 
+    mapping = aes(
+      x = Date, 
+      y = Average_Price / 1000,
+      colour = Region_Name, 
+      linetype = Region_Name
+    )
+  ) + 
+    geom_line(linewidth = lwd) + 
+    scale_x_date(
+      expand = c(0, 0),
+      date_labels = "%Y", 
+      date_breaks = date_breaks
+    ) + 
+    scale_colour_manual(
+      values = cbPalette[-1]
+    ) + 
+    labs(
+      x = "Year", 
+      y = "Average house price (in 1,000 £)", 
+      colour = "Region Name", 
+      linetype = "Region Name"
+    ) + 
+    theme(
+      legend.position = legend_position, 
+      legend.background = element_rect(colour = "black")
+    )
+  return(p)
+}
+
+house_data %>%
+  filter(
+    Region_Name == c("England", "Scotland", "Wales", "Northern Ireland")
+  ) %>%
+  get_house_price_plot()
+@
+
+
+
+
+<<extract_cambridge_regions, echo = FALSE, message = FALSE, warning = FALSE>>=
+regions_and_dates <- house_data %>%
+  filter(
+    Region_Name == "England" | str_detect(Region_Name, pattern = "Cambridge")
+  ) %>%
+  group_by(Region_Name) %>%
+  summarize(First_Date = min(Date), Last_Date = max(Date))
+@
+
+\item Moreover, we want to plot the average house prices for England and the four regions that have ``Cambridge" in the region name. We want to restrict the date range in the plot to only those dates for which England and Cambridge regional information are available. Table \ref{tab:table_cambridge} presents the four regions of Cambridge together with the first and last date for which the average house price is available in our sample. We observe that for all Cambridge regions the price series is available from 1995-01-01. For England, however, the first observation is already in 1968-04-01. The last observation for all regions is made at \Sexpr{pull(regions_and_dates[1, 3])}. Furthermore, it can be shown that we do not have regions with missing price-observations between 1995-01-01 and \Sexpr{pull(regions_and_dates[1, 3])}. Therefore, we restrict the plotting period to these dates. \par 
+
+<<table_cambridge, echo = FALSE, warning = FALSE, message = FALSE>>=
+regions_and_dates %>%
+  kbl(
+    caption = paste("The four regions of Cambridge together with the first", 
+                    "and last date observed in our sample"),
+    col.names = c("Region Name", "First date", "Last date"),
+    booktabs = TRUE, 
+    format = "latex",
+    table.envir = "table} \\captionsetup{margin = 105pt"
+  ) %>%
+  kable_styling(latex_options = c("HOLD_position"))
+@
+
+Figure \ref{fig:plot_average_price_cambridge} plots the average house price for England and the four Cambridge regions. In general, we observe that the average house price in the Cambridge regions is higher than those in England since 1995. Especially the prices in Cambridge and Cambridgeshire are high relative to England, and this absolute difference seems to have grown over time. 
+
+<<plot_average_price_cambridge, echo = FALSE, results = FALSE, fig.height = 4, fig.width = 7, warning = FALSE, fig.cap = "Average house price for England and the four regions of Cambridge", fig.pos = "H", fig.align = "center", out.width = '80%'>>=
+house_data %>%
+  filter(Region_Name %in% regions_and_dates$Region_Name) %>%
+  filter(
+    (
+      Date >= max(regions_and_dates$First_Date)
+    ) & (
+      Date <= min(regions_and_dates$Last_Date)
+    )
+  ) %>%
+  get_house_price_plot(
+    date_breaks = "5 years", 
+    legend_position = c(0.15, 0.75)
+  ) 
+@
+
+
+
+
+\item In this section, we determine the regions in England for which the average house price has been the highest over time. We define the regions in England as those for which the first character of the \code{Area\_Code} variable is ``E". Then, for each of those regions, we calculate the monthly ratio of the average house price for that region relative to the average price in England, where the observations are matched by date. By comparing the median of those ratios between regions, we get some idea of where in England the average house prices have been highest over time. 
+
+<<table_highest_median, echo = FALSE, message = FALSE, warning = FALSE>>=
+avg_prices_england <- house_data %>%
+  filter(Region_Name == "England") %>%
+  select(Date, Average_Price)
+
+table_data <- house_data %>%
+  filter(str_starts(Area_Code, "E")) %>%
+  filter(Region_Name != "England") %>%
+  select(Region_Name, Date, Average_Price) %>%
+  inner_join(y = avg_prices_england, by = "Date", suffix = c("", "_ENG")) %>%
+  mutate(Average_Price_Ratio = Average_Price / Average_Price_ENG) %>%
+  group_by(Region_Name) %>%
+  summarize(
+    Median_Ratio = median(Average_Price_Ratio),
+    Initial_House_Price = first(Average_Price, order_by = Date) / 1000,
+    Final_House_Price = last(Average_Price, order_by = Date) / 1000,
+    Percentage_Increase = (Final_House_Price / Initial_House_Price - 1) * 100
+  ) %>%
+  arrange(desc(Median_Ratio)) %>%
+  head(n = 10) 
+
+table_data %>% 
+  kbl(
+    digits = 2, 
+    col.names = c("Region Name", "Median Ratio", "Initial Price*", 
+                  "Final Price*", "Increase (%)"), 
+    caption = paste0("This table presents the 10 regions in England with the ",
+                     "highest median house-price ratio relative to England ", 
+                     "(as described in the text above). Besides that, this ",
+                     "table presents the initial and final average house ", 
+                     "price, and the percentage increase between these two ", 
+                     "values. The average prices are presented in 1,000£."),
+    booktabs = TRUE, 
+    linesep = "",
+    table.envir = "table} \\captionsetup{margin = 15pt"
+  ) %>%
+  kable_paper(latex_options = c("HOLD_position")) %>%
+  footnote(symbol = "Expressed in 1,000 GBP.")
+@
+
+Table \ref{tab:table_highest_median} presents the 10 regions with the highest median ratio. Perhaps not surprisingly, these are all regions in or near London. Thus, while the prices of houses in Cambridge are elevated, they are not in the top 10 most elevated regions. We observe that \Sexpr{table_data %>% first() %>% select(Region_Name)} has the highest median ratio, with a value of \Sexpr{table_data %>% first() %>% select(Median_Ratio) %>% round(digits = 2)}. Table \ref{tab:table_highest_median} also shows the initial and final average house prices for the period over which the medians are calculated, and the percentage increase between these two values. We observe that the percentage increase is highest for \Sexpr{table_data %>% arrange(desc(Percentage_Increase)) %>% select(Region_Name) %>% first()}, with an increase of \Sexpr{table_data %>% arrange(desc(Percentage_Increase)) %>% select(Percentage_Increase) %>% first() %>% round(digits = 2)}\%.
+
+
+
+
+\item Now, we are going to use the inflation index to investigate whether the house prices in England increased, on average, faster than inflation. We use the “CPIH INDEX 00” as consumer price index for the UK, which also includes owner-occupied housing costs. Since the baseline value of this inflation index is 2015 (with value 100), we are particularly interested in the increase of inflation compared to house prices from 2015 onwards. Therefore, we appropriately scale the average house price series of England such that it intersects with the inflation series in 2015. In this way, we can easily compare the relative increase since then. The resulting plot is shown in Figure \ref{fig:plot_inflation}, where the left-axis corresponds to the inflation series (CPIH) and the right-axis to the average house price series of England. The baseline year, 2015, is highlighted with a red-dashed vertical line.
+
+<<plot_inflation, message = FALSE, echo = FALSE, fig.height = 4, fig.width = 7, warning = FALSE, fig.cap = "Increase in average house price in England versus increase in inflation (CPIH).", fig.pos = "H", fig.align = "center", out.width = '80%'>>=
+inflation <- read_csv(
+  file = "series-201024.csv",
+  skip = 190,
+  col_names = c("YM", "CPIH")
+)
+
+inflation <- inflation %>%
+  mutate(
+    Year = year(ym(YM)), 
+    Month = month(ym(YM)), 
+    .keep = "unused", 
+    .before = 1
+  )
+
+ENG_inflation_plot_df <- house_data %>%
+  filter(Region_Name == "England") %>%
+  mutate(Year = year(Date), Month = month(Date)) %>%
+  inner_join(y = inflation, by = join_by(Year, Month)) %>%
+  select(-c(Year, Month))
+
+avg_price_2015 <- ENG_inflation_plot_df %>% 
+  filter(Date == "2015-07-01") %>%
+  pull(Average_Price)
+
+ggplot(ENG_inflation_plot_df, mapping = aes(x = Date)) + 
+  geom_line(mapping = aes(y = CPIH, colour = "CPIH"), lwd = 0.7) +
+  geom_line(
+    mapping = aes(
+      y = Average_Price / avg_price_2015 * 100, 
+      colour = "Average House Price"
+    ), 
+    lwd = 0.7
+  ) + 
+  scale_y_continuous(sec.axis = sec_axis(
+    transform = ~.* avg_price_2015 / (100 * 1000),
+    name = "Average House Price (in 1,000 GBP)"
+  )) +
+  scale_x_date(
+    expand = c(0, 0),
+    date_labels = "%Y", 
+    breaks = seq(as.Date("1985/7/1"), as.Date("2025/7/1"), by = "5 years")
+  ) +
+  geom_vline(
+    xintercept = as.Date("2015-07-01"), 
+    linetype = "dashed", 
+    colour = cbPalette[5]
+  ) + 
+  scale_colour_manual(values = cbPalette[2:3]) + 
+  labs(
+    y = "CPIH index (2015 = 100)",
+    x = "Year",
+    colour = NULL
+  ) +
+  theme(
+    legend.position = c(0.15, 0.88), 
+    legend.background = element_rect(colour = "black")
+  )
+@
+
+In Figure \ref{fig:plot_inflation}, we observe that the average house price series clearly increased faster than inflation since 2015. More specifically, the house price series increased by \Sexpr{round((ENG_inflation_plot_df$Average_Price[nrow(ENG_inflation_plot_df)] / avg_price_2015 - 1) * 100, digits = 1)}\% since 2015, while the CPIH index increased by \Sexpr{round(last(ENG_inflation_plot_df$CPIH) - 100, digits = 1)}\%. Also since \Sexpr{first(ENG_inflation_plot_df$Date)} (i.e., the first date for which both inflation and price data are available) the house price in England increased faster than inflation, with a value of \Sexpr{round((last(ENG_inflation_plot_df$Average_Price) / first(ENG_inflation_plot_df$Average_Price) - 1) * 100, digits = 1)}\% and \Sexpr{round((last(ENG_inflation_plot_df$CPIH) / first(ENG_inflation_plot_df$CPIH) - 1) * 100, digits = 1)}\%, respectively. 
+
+
+
+
+\item Finally, we investigate whether seasonal patterns are present in the average house price changes of the United Kingdom. We do this by plotting the month-over-month percentage changes in average house prices, where the observations are grouped by month and coloured by decade in a beeswarm plot. The resulting plot is given in Figure \ref{fig:plot_beeswarm}. The large black dots in the figure, which correspond to the mean value, indicate that the average monthly change in UK house price is larger in the spring/summer period than in the autumn/winter period. This observation could potentially be explained by the weather. For instance, in the winter period it gets dark early, which might reduce the number of visits by potential buyers. Moreover, Figure \ref{fig:plot_beeswarm} annotates the observation associated with the largest monthly price drop in the UK. We observe that this drop happened in July 2021, when the average house price declined by 4.7\% in a single month. Interestingly, July 2021 is also associated with record-breaking temperatures in the UK, and there were COVID-19 restrictions in place. These events might explain the large drop in average house price. 
+
+<<plot_beeswarm, echo = FALSE, results = FALSE, fig.height = 6, fig.width = 9, warning = FALSE, message = FALSE, fig.cap = "Beeswarm plot for the month-over-month percentage change in average house prices in the UK", fig.pos = "H", fig.align = "center", out.width = '100%'>>=
+price_changes <- house_data %>%
+  filter(Region_Name == "United Kingdom") %>%
+  mutate(
+    Month = month(Date, label = TRUE, abbr = TRUE), 
+    Decade = year(floor_date(Date, unit = "10 years"))
+  )
+
+ggplot(
+  data = price_changes, 
+  mapping = aes(x = Month, y = Monthly_Change, colour = as.factor(Decade))
+) + 
+  geom_beeswarm() + 
+  annotate(
+    geom = "curve", 
+    x = 5 * month(1),
+    xend = 6.8 * month(1),
+    y = -5.5, 
+    yend = -5, 
+    curvature = 0.3, 
+    arrow = arrow(length = unit(2, "mm"))
+  ) + 
+  geom_label(
+    data = price_changes %>% slice_min(Monthly_Change), 
+    mapping = aes(label = paste0(
+      "Month: ", month(Date, label = TRUE, abbr = FALSE), "\n", 
+      "Year: ", year(Date), "\n", 
+      "% Change: ", Monthly_Change
+    )), 
+    nudge_y = -0.5, 
+    nudge_x = -3.5,
+    size = 3, 
+    colour = "black",
+    hjust = "left"
+  ) + 
+  stat_summary(
+    mapping = aes(shape = "Mean"),
+    fun = "mean", 
+    colour = "black",
+    geom = "point", 
+    size = 4
+  ) + 
+  scale_y_continuous(limits = c(-7, NA)) + 
+  scale_colour_viridis_d() + 
+  labs(
+    y = "Month-over-month change in UK house price (in %)",
+    colour = "Decade", 
+    shape = ""
+  ) 
+@
+
+
+
+
+\end{enumerate}
+
+
+
+
+
+
+\section{Chemical similarity}
+
+\begin{enumerate}
+
+
+
+\item In this section, we analyse the amino-acid data in the CSV file \code{AA-NNAA-FP.csv}. First, we load the dataset into R. 
+
+<<load_amino_data, message = FALSE, warning = FALSE>>=
+amino_acids <- read_csv("AA-NNAA-FP.csv", progress = FALSE)
+@
+
+The resulting dataframe has \Sexpr{nrow(amino_acids)} rows (i.e., amino acids) and \Sexpr{ncol(amino_acids)} columns. We obtain the column names with by running the following expression in R:
+
+<<table_col_names, message = FALSE, warning = FALSE>>=
+amino_acids %>%
+  colnames() %>%
+  kable(col.names = c("Column Names"))
+@
+
+Next, we would like to know the number of natural and non-natural amino acids in our sample. For this purpose, we use the \code{isNatural} column, which equals 1 when the amino acid is natural and 0 otherwise. 
+
+<<summarize_acid_data, message = FALSE, warning = FALSE>>=
+amino_acids %>%
+  group_by(IsNatural) %>%
+  summarize(Count = n()) %>%
+  kable()
+@
+
+In the table above, we observe that our dataset contains \Sexpr{sum(amino_acids$IsNatural == 1)} natural amino acids and \Sexpr{sum(amino_acids$IsNatural == 0)} non-natural amino acids. Note that our dataset contains more than 20 natural amino acids, which might seem like a mistake. However, our dataset also contains the natural amino acids of the \textit{zwitterionic} form. When we take this into account, we observe that our dataset contains 19 \textit{non-zwitterionic} natural amino acids, as can be seen in the table below. 
+
+<<natural_and_zwitterionic, message = FALSE, warning = FALSE>>=
+amino_acids %>%
+  mutate(
+    IsZwitterionic = as.integer(str_detect(Name, pattern = "Zwitterionic"))
+  ) %>%
+  group_by(IsNatural, IsZwitterionic) %>%
+  summarize(Count = n()) %>%
+  kable()
+@
+
+
+
+
+\item Next, we separate the dataframe \code{amino\_acids} into two new dataframes, \code{dfAA} and \code{dfNNAA}. \code{dfAA} contains the natural amino acids (AAs). Similarly, \code{dfNNAA} contains the non-natural amino acids (NNAAs). 
+
+<<separate_amino_acid_df, message = FALSE, warning = FALSE>>=
+dfAA <- amino_acids %>%
+  filter(IsNatural == 1)
+dfNNAA <- amino_acids %>%
+  filter(IsNatural == 0)
+@
+
+The last column in these dataframes is \code{FP}, which contains the ECFP4 2048-bit fingerprints. We would like to test whether all these fingerprints are indeed 2048 bits long. We check this with the expression given below. Note that the fingerprints are stored as strings in \code{amino\_acids}, where the bits are separated by spaces. 
+
+<<test_bits_fingerprint, message = FALSE, warning = FALSE>>=
+test_that("All fingerprints in dataframe are 2048 bits long", {
+  expect_true(
+    all(
+      amino_acids %>%
+        pull(FP) %>%
+        str_split(pattern = " ") %>%
+        sapply(FUN = length)
+      == 2048
+    )
+  )
+})
+@
+
+Since the test is passed, we conclude that all the fingerprints in the original dataframe are indeed 2048 bits long. 
+
+
+
+
+\item Now that we know all fingerprints are of the correct length, it is time to develop our first function to calculate the Tanimoto similarity measure. This function, which is named \code{get\_tanimoto\_similarity}, calculates the Tanimoto similarity measure for two fingerprints by comparing each pair of bits using a for loop. The function is defined as follows. 
+
+<<tanimoto_base_R, warning = FALSE, message = FALSE>>=
+get_tanimoto_similarity <- function(fp1, fp2) {
+  n_intersection <- 0
+  n_union <- 0
+  
+  for (i in seq_along(fp1)) {
+    if (fp1[i] || fp2[i]) {
+      n_union <- n_union + 1
+      if (fp1[i] && fp2[i]) {
+        n_intersection <- n_intersection + 1
+      }
+    }
+  }
+  
+  if (n_union == 0) {
+    return(1.0)
+  }
+  n_intersection / n_union
+}
+@
+
+In order to prevent a division by zero, we include a if-condition before we calculate the Tanimoto similarity measure and return the output. The only situation that can result in a division by zero is when both fingerprints contain only zeroes. This means that no single chemical substructure is present in any of the two fingerprints. Even though this situation is very unlikely to occur, and might rather be an indicator of a typo in the data, we do take it explicitly into account here. Formally, two fingerprints with only zeroes are identical and, thus, the Tanimoto similarity measure should be one. \par
+
+Furthermore, in the function above we assume that the fingerprints provided as arguments (\code{fp1} and \code{fp2}) are integer vectors of binary numbers. However, as we mentioned before, the fingerprints in the original dataframe are strings. We decide to convert the strings to integer vectors outside the function above (and any function below), since this is more efficient (but it is maybe less beneficial when someone cares about storage). For example, if we would like to compare all the fingerprints to all other fingerprints, the number of conversions from string to integer vector would be way less when we do this outside the function call (only once) than when we do this inside the function. \par 
+
+The tests below check that the numeric value returned by \code{get\_tanimoto\_similarity} is never negative or greater than 1.
+
+<<tanimoto_tests, warning = FALSE, message = FALSE>>==
+test_that("Identical fingerprints give tanimoto similarity of 1", {
+  fp1 <- c(1, 0, 1, 0, 1)
+  fp2 <- fp1
+  expect_equal(
+    get_tanimoto_similarity(fp1, fp2), 
+    1
+  )
+})
+test_that("Completely different fingerprints have similarity of 0", {
+  fp1 <- c(1, 0, 1, 0, 1)
+  fp2 <- c(0, 1, 0, 1, 0)
+  expect_equal(
+    get_tanimoto_similarity(fp1, fp2), 
+    0
+  )
+})
+test_that("Two fingerprints have similarity between 0 and 1", {
+  fp1 <- c(1, 0, 1, 0, 1)
+  fp2 <- c(0, 0, 1, 1, 1)
+  value <- get_tanimoto_similarity(fp1, fp2)
+  expect_true(value <= 1 & value >= 0)
+})
+test_that("Two fingerprints with only zeroes have similarity of 1", {
+  fp1 <- rep(0, times = 5)
+  fp2 <- rep(0, times = 5)
+  expect_equal(
+    get_tanimoto_similarity(fp1, fp2), 
+    1
+  )
+})
+@
+
+
+
+
+\item Instead of using a for-loop it is probably more efficient to implement the Tanimoto similarity calculation using vectorized R. This function, named \code{get\_tanimoto\_vectorized}, is defined as follows:
+
+<<tanimoto_vectorized, warning = FALSE, message = FALSE>>=
+get_tanimoto_vectorized <- function(fp1, fp2) {
+  n_union <- sum(fp1 | fp2)
+  n_intersection <- sum(fp1 & fp2)
+  
+  if (n_union == 0) {
+    return(1.0)
+  } 
+  n_intersection / n_union
+}
+@
+
+
+
+
+\item For our third implementation of the Tanimoto simularity calculation, we use the \code{bitops} package. It provides functions to perform bitwise comparisons of integer vectors. Using these function, we define the following \code{get\_tanimoto\_bitops} function.  
+
+<<tanimoto_bitops, warning = FALSE, message = FALSE>>=
+get_tanimoto_bitops <- function(fp1, fp2) {
+  n_union <- sum(bitops::bitOr(fp1, fp2))
+  n_intersection <- sum(bitops::bitAnd(fp1, fp2))
+  
+  if (n_union == 0) {
+    return(1.0)
+  }
+  n_intersection / n_union
+}
+@
+
+
+
+
+\item Finally, we define the C++ function \code{get\_tanimoto\_Rcpp} in R using the \code{Rcpp} package. 
+
+<<tanimoto_Rcpp, warning = FALSE, message = FALSE>>=
+Rcpp::cppFunction("
+double get_tanimoto_Rcpp(IntegerVector fp1, IntegerVector fp2) {
+    double n_intersection = 0; 
+    double n_union = 0; 
+    
+    for (int i = 0; i < fp1.size(); i++) {
+        if (fp1[i] == 1 || fp2[i] == 1) {
+            n_union++;
+            if (fp1[i] == 1 && fp2[i] == 1) {
+                n_intersection++;
+            }
+        }
+    }
+    
+    if (n_union == 0) {
+        return 1.0; 
+    }
+    return n_intersection / n_union; 
+}                 
+")
+@
+
+
+
+
+\item It is important to test that all the functions that we defined above give the same Tanimoto similarity measure. Therefore, we use the \code{testthat} package to define an unit test for the equality of output. This test is given below, and uses the first natural amino acid in \code{dfAA} and non-natural amino acid in \code{dfNNAA} as input arguments. 
+
+<<test_equality_functions, message = FALSE, warning = FALSE>>=
+test_that("All functions generate the same Tanimoto similarity result", {
+  fp1 <- as.integer(str_split_1(dfAA$FP[1], pattern = " "))
+  fp2 <- as.integer(str_split_1(dfNNAA$FP[1], pattern = " "))
+  expect_equal(
+    get_tanimoto_similarity(fp1, fp2), 
+    get_tanimoto_vectorized(fp1, fp2)
+  )
+  expect_equal(
+    get_tanimoto_vectorized(fp1, fp2), 
+    get_tanimoto_bitops(fp1, fp2)
+  )
+  expect_equal(
+    get_tanimoto_bitops(fp1, fp2), 
+    get_tanimoto_Rcpp(fp1, fp2)
+  )
+})
+@
+
+
+
+
+\item Ultimately, we want to know which implementation calculates the Tanimoto similarity the fastest. For this reason, we will benchmark the four implementations below. We define the function \code{get\_running\_times}, which gives the running times in seconds (by default, \code{unit} = ``s") for each Tanimoto function that is runned \code{runs} times. 
+
+<<run_time_function, warning = FALSE, message = FALSE>>=
+get_running_times <- function(runs, unit = "s") {
+  fp1 <- as.integer(str_split_1(dfAA$FP[1], pattern = " "))
+  fp2 <- as.integer(str_split_1(dfNNAA$FP[1], pattern = " "))
+  times <- microbenchmark(
+    "R loop" = get_tanimoto_similarity(fp1, fp2),
+    "R vectorized" = get_tanimoto_vectorized(fp1, fp2),
+    bitops = get_tanimoto_bitops(fp1, fp2), 
+    Rcpp = get_tanimoto_Rcpp(fp1, fp2), 
+    times = runs, 
+    unit = unit
+  )
+  summary(times)[, c("expr", "mean", "neval")]
+}
+@
+
+
+\begin{enumerate}
+
+\item First, we use \code{get\_running\_times} to obtain the running times (in seconds) of the four Tanimoto implementations, and for different number of \code{runs}. More specifically, we consider the running times when each implementation is called 1000, 5000, 10000, 25000, 50000, 75000, or 100000 times. The running times are given in Table \ref{tab:table_running_times}. 
+
+<<table_running_times, warning = FALSE, message = FALSE>>=
+seq_runs <- c(1, 5, 10, 25, 50, 75, 100) * 1000
+
+total_run_times <- bind_rows(
+  lapply(seq_runs, FUN = function(x) get_running_times(runs = x))
+) %>% 
+  mutate(total = mean * neval) %>%
+  select(-mean)
+
+total_run_times %>%
+  pivot_wider(names_from = expr, values_from = total) %>%
+  rename(Runs = neval) %>%
+  kbl(
+    digits = 2, 
+    caption = paste0("Running times (in seconds) for the four ",
+                     "Tanimoto similarity functions defined in ", 
+                     "this paper."),
+    booktabs = TRUE, 
+    linesep = "",
+    table.envir = "table} \\captionsetup{margin = 20pt"
+  ) %>%
+  column_spec(1:5, width = "2.5 cm") %>%
+  kable_paper(latex_options = c("HOLD_position"))
+@
+
+We observe that the C++ implementation, with the function \code{get\_tanimoto\_Rcpp}, has the lowest running times. Furthermore, the remaining implementations can be ordered from low to high running times by: ``R vectorized", ``bitops" and ``R loop". 
+
+
+
+
+\item Next, we plot the running times for each method against the number of repetitions. We use the following R code to generate the figure. 
+
+<<plot_running_times, message = FALSE, warning = FALSE, fig.height = 5, fig.width = 9, fig.align='center'>>==
+ggplot(
+  data = total_run_times, 
+  mapping = aes(
+    x = neval, 
+    y = total, 
+    linetype = expr, 
+    colour = expr
+  )
+) + 
+  geom_line(linewidth = 0.7) + 
+  scale_colour_manual(values = cbPalette[-1]) + 
+  scale_x_continuous(breaks = seq_runs, minor_breaks = NULL) + 
+  labs(
+    x = "Number of Repetitions", 
+    y = "Time (seconds)", 
+    linetype = "Method", 
+    colour = "Method", 
+    title = "Performance Comparison of Tanimoto Similarity Methods"
+  ) + 
+  theme(
+    legend.position = c(0.08, 0.82), 
+    legend.background = element_rect(colour = "black")
+  )
+@
+
+In the figure above, we observe that, for each method, the running time increases linearly with the number of repetitions. However, the slope of this linear relationship differs between the methods. Especially, the running time for the ``R loop" method (\code{get\_tanimoto\_similarity}) increases faster than the running time for other methods. Furthermore, it is not surprising that we observe a linear relationship because the size of the input arguments stays the same (i.e., each fingerprints has 2048 bits). Additionally, since no randomness is involved in the calculation of the Tanimoto similarity, the average running time is likely constant for these large number or repetitions. Thus, the total running time will increase by a constant factor for each additional repetition.
+
+
+
+
+\item Now, we will analyse the time-complexity of the four Tanimoto algorithms using the Big-O notation. The figure above might suggest that the time-complexity is linear for each method. However, note that this figure does not show how the running time increases as a function of the size of the input arguments (i.e., the number of bits in each fingerprint). Instead, the complexity of an algorithm is related to this relationship between input size and number of operations (which can be related to running time if we assume that each operation takes a fixed amount of time). Let $N$ be the length of the fingerprint-vectors (i.e., the number of bits). Then, the Big-O notation for each implementation can be derived as follows: 
+
+\textbf{R loop}
+\begin{enumerate}
+\item We loop over the length of the fingerprints ($N$). Thus, the number of operations we perform inside this loop should be multiplied by a factor $N$. 
+
+\item In each iteration, we compare the two bits at the corresponding positions in \code{fp1} and \code{fp2} (i.e., the two fingerprints). Then, given this comparison, we perform a fixed number of operations (i.e., does not increase with the size of any input arguments). Thus, the complexity for each iteration is $\mathcal{O}(1)$. 
+
+\item After running the loop, we check the value of one variable, which can be seen as one operation. Then, we immediately return the desired result. 
+
+\item \textbf{Conclusion:} the complexity is roughly given by $\mathcal{O}(N) * \mathcal{O}(1) + \mathcal{O}(1)$, which is equivalent to $\mathcal{O}(N)$. 
+\end{enumerate}
+
+
+\textbf{R vectorized}
+\begin{enumerate}
+\item First, we use the element-wise OR and AND operators on the two fingerprints of length $N$. So, these operations have a time-complexity of $\mathcal{O}(2N) = \mathcal{O}(N)$. We are left with two boolean vectors of length $N$. 
+
+\item Then, we sum over the two boolean vectors to obtain two numeric values (\code{n\_union} and \code{n\_intersection}). These operations again have a complexity of roughly $\mathcal{O}(2N) = \mathcal{O}(N)$.
+
+\item Finally, we again check one variable to avoid a division by zero, which gives one additional operation. After that, we return the final result. 
+
+\item \textbf{Conclusion:} the complexity is roughly $\mathcal{O}(N) + \mathcal{O}(N) + \mathcal{O}(1)$, which can be summarized as $\mathcal{O}(N)$. Given the first 2 steps above, you might believe that the complexity is given by $\mathcal{O}(N * N)$. However, note that the sum is performed after we compared all the $N$ pairs of bits. We do not sum over $N$ elements for each pair of bits we compare, which would give $\mathcal{O}(N^2)$. 
+\end{enumerate}
+
+
+\textbf{Bitops} \newline
+The same analysis as for ``R vectorized". However, we use the \code{bitAnd} and \code{bitOr} functions instead of the element-wise ``\&" and ``$|$" equivalents. We assume that the complexity of both functions is $\mathcal{O}(N)$. Then, the complexity of \code{get\_tanimoto\_bitops} is also $\mathcal{O}(N)$. 
+
+\textbf{Rcpp} \newline
+The C++ function is exactly the same as the \code{get\_tanimoto\_similarity} function. The only difference is that it is implemented in C++ instead of R. Therefore, the same analysis as for ``R loop" holds here. Thus, the complexity of \code{get\_tanimoto\_Rcpp} is $\mathcal{O}(N)$.  
+
+
+
+
+\item All in all, we observe that the C++ implementation has the lowest running times. Given the analysis above, this cannot be explained by the time-complexity of the algorithms, since all implementations have the same complexity. Instead C++ is just faster. For instance, in the lecture notes it is written that C++ runs for-loops faster. This could potentially explain why \code{get\_tanimoto\_Rcpp} is faster than the other functions. 
+
+\end{enumerate}
+
+
+
+
+\item In this section, we will make three tables that show the most, second most, and third most similar non-natural amino acids (NNAAs) for each natural amino acid (AA). The final tables report the natural AAs in alphabetical order. We use our \code{get\_tanimoto\_Rcpp} function (i.e., our fastest function) to calculate the Tanimoto similarities between all NNAAs in \code{dfNNAA} and AAs in \code{dfAA}. In order to calculate these similarity measures, we need the fingerprints as integer vectors. As we argued earlier, we prefer to convert all fingerprint strings to integer vectors only once. We store all the bit-vectors in lists by running the following R expression:
+
+<<fingerprint_lists, warning = FALSE, message = FALSE>>=
+AA_FP_list <- lapply(
+  X = str_split(dfAA$FP, pattern = " "),
+  FUN = as.integer
+)
+names(AA_FP_list) <- dfAA$Name
+NNAA_FP_list <- lapply(
+  X = str_split(dfNNAA$FP, pattern = " "),
+  FUN = as.integer
+)
+names(NNAA_FP_list) <- dfNNAA$Name
+@
+
+Then, we code a function that calculates the $n$ most similar NNAAs for each natural amino acid (AA). We use this function to make a variable \code{three\_most\_similar\_NNAAs}, which is a list and stores the \code{tibble} objects with the $n$ most similar NNAAs for each AA in \code{dfAA}. 
+
+<<find_most_similar_NNAAs, warning = FALSE, message = FALSE>>==
+find_n_most_similar_NNAAs <- function(AA_FP, NNAA_FP_list, n = 3) {
+  similarity <- lapply(
+    X = NNAA_FP_list,
+    FUN = function(x) get_tanimoto_Rcpp(fp1 = x, fp2 = AA_FP)
+  )
+
+  tibble(
+    NNAAName = names(similarity),
+    Similarity = as.numeric(similarity)
+  ) %>%
+    arrange(desc(Similarity)) %>%
+    head(n = n)
+}
+
+three_most_similar_NNAAs <- lapply(
+  X = AA_FP_list,
+  FUN = function(x) find_n_most_similar_NNAAs(AA_FP = x, NNAA_FP_list)
+)
+@
+
+Finally, we make the similarity tables with the \code{kableExtra} package. The table for a specific \code{rank} (between $1$ and $n$), and with a specific \code{caption}, is obtained by calling the function \code{make\_similarity\_table}. 
+
+<<table_most_similar_NNAAs, results = 'asis', warning = FALSE, message = FALSE>>==
+make_similarity_table <- function(
+    most_similar_NNAAs, 
+    rank, 
+    caption, 
+    label
+) {
+  tibble(
+    AAName = names(most_similar_NNAAs),
+    bind_rows(lapply(X = most_similar_NNAAs, FUN = function(x) x[rank,]))
+  ) %>%
+    arrange(AAName) %>%
+    kbl(
+      digits = 3,
+      format = "latex",
+      booktabs = TRUE,
+      caption = caption,
+      linesep = "",
+      table.envir = "table} \\captionsetup{margin = 55pt", 
+      label = label
+    ) %>%
+    kable_styling(latex_options = c("HOLD_position"), font_size = 10)
+}
+
+table_input_args <- list(
+  c(rank = 1, cap = "Most Similar Non-natural AA", lab = "most1"),
+  c(rank = 2, cap = "Second Most Similar Non-natural AA", lab = "most2"),
+  c(rank = 3, cap = "Third Most Similar Non-natural AA", lab = "most3")
+)
+for (args in table_input_args) {
+  print(make_similarity_table(
+    three_most_similar_NNAAs,
+    rank = args["rank"],
+    caption = args["cap"], 
+    label = args["lab"]
+  ))
+}
+@
+
+The most, second most, and third most similar NNAAs are shown in Table \ref{tab:most1}, Table \ref{tab:most2}, and Table \ref{tab:most3}, respectively. Note that for some natural amino acids the Tanimoto similarity for the top 3 most similar NNAAs is the same (e.g., Alanine). Besides that, it is also possible that there is a fourth NNAA which has a similarity measure equal to the the third most similar NNAA, but which is of course not shown in any of the tables. In Table \ref{tab:most1}, we observe that a lot of AA fingerprints are exactly the same as the fingerprint of the corresponding most similar NNAA (i.e., have Tanimoto similarity of 1). This holds especially for the \textit{non-zwitterionic} AAs. In Table \ref{tab:most2} and Table \ref{tab:most3}, we observe that the Tanimoto similarities decline as we move from the most similar NNAA to the second most and third most similar NNAA (logically), but the similarity for most of the \textit{non-zwitterionic} AAs are still high. 
+
+
+
+
+\item In the three tables above, we observe that all non-natural amino acids (NNAAs) have the chemical supplier \textit{MolPort} in their name. These NNAAs can be purchased from MolPort. Furthermore, we observe in Table \ref{tab:most1} that most \textit{non-zwitterionic} natural amino acids have a Tanimoto similarity of 1 with their corresponding most similar NNAA (which is supplied by MolPort). Therefore, it is very likely that MolPort sells \textit{non-zwitterionic} natural amino acids, or at least NNAAs which have a very similar function as them (\textit{similar compounds have similar properties}). For the \textit{zwitterionic} natural amino acids, however, the most similar NNAAs have a much smaller Tanimoto similarity (Table \ref{tab:most1}). Thus, it is very unlikely we can buy a \textit{zwitterionic} natural amino acid from MolPort. 
+
+
+
+
+\item In this section, we compare the running times of the serial implementations of the Tanimoto similarity function against two parallel implementations using forks and sockets. Therefore, we first define the two functions which use parallel computing to compare all fingerprints in (a subset of) \code{dfAA} with all fingerprints in (a subset of) \code{dfNNAA}. These functions are named \code{get\_tanimoto\_sockets} and \code{get\_tanimoto\_forks} for the sockets and forks implementation, respectively. Inside these functions, the Tanimoto similarity between two fingerprints is calculated with \code{get\_tanimoto\_vectorized}. Besides that, we also define a function \code{make\_fingerprint\_list} which, given a dataframe of amino acids, returns a named list with integer-vector fingerprints as elements. Note that we could just make this fingerprint-list once, and then pass (a subset of it) every time to the parallel functions. However, we decide to make this fingerprint-list inside the parallel functions, such that we obtain running times in a setting that is as realistic as possible. 
+
+<<parallel_functions, message=FALSE, warning=FALSE>>=
+make_fingerprint_list <- function(amino_acids) {
+  FP_list <- lapply(
+    X = str_split(amino_acids$FP, pattern = " "), 
+    FUN = as.integer
+  )
+  names(FP_list) <- amino_acids$Name
+  FP_list
+}
+
+get_tanimoto_sockets <- function(dfAA, dfNNAA, n_cores) {
+  AA_FP_list <- make_fingerprint_list(dfAA)
+  NNAA_FP_list <- make_fingerprint_list(dfNNAA)
+  cl <- makeCluster(n_cores)
+  clusterExport(cl, c("NNAA_FP_list", "get_tanimoto_vectorized"))
+  result <- parLapply(
+    cl = cl, 
+    X = AA_FP_list, 
+    fun = function(x) {
+      sapply(NNAA_FP_list, function(y) get_tanimoto_vectorized(x, y))
+    }
+  )
+  stopCluster(cl)
+  bind_rows(result, .id = "AAName")
+}
+
+get_tanimoto_forks <- function(dfAA, dfNNAA, n_cores) {
+  AA_FP_list <- make_fingerprint_list(dfAA)
+  NNAA_FP_list <- make_fingerprint_list(dfNNAA)
+  result <- mclapply(
+    X = AA_FP_list, 
+    mc.cores = n_cores, 
+    FUN = function(x) {
+      sapply(NNAA_FP_list, function(y) get_tanimoto_vectorized(x, y))
+    }
+  )
+  bind_rows(result, .id = "AAName")
+}
+@
+
+Furthermore, note that the (non-parallel) Tanimoto functions we defined earlier only calculate the similarity measure for two fingerprints. In order to calculate the Tanimoto similarities between all fingerprints in (a subset of) \code{dfAA} and \code{dfNNAA}, we define the following \code{get\_tanimoto\_serial} function: 
+
+<<get_tanimoto_serial, message=FALSE, warning=FALSE>>=
+get_tanimoto_serial <- function(dfAA, dfNNAA, func) {
+  AA_FP_list <- make_fingerprint_list(dfAA)
+  NNAA_FP_list <- make_fingerprint_list(dfNNAA)
+  result <- lapply(
+    X = AA_FP_list, 
+    FUN = function(x) {
+      sapply(NNAA_FP_list, function(y) func(x, y))
+    }
+  )
+  bind_rows(result, .id = "AAName")
+}
+@
+
+Now, we compute the running times for all the Tanimoto similarity functions we defined in this paper. The function \code{get\_grid\_of\_times}, defined below, has as input arguments the original dataframes \code{dfAA} and \code{dfNNAA}, and obtains for various grid sizes of AAs and NNAAs the running time of the functions with \code{microbenchmark}. Specifically, starting with 2 AAs in \code{dfAA} and 5 NNAAs in \code{dfNNAA}, we derive the running time of comparing all AAs in \code{dfAA} with all NNAAs in \code{dfNNAA}. After obtaining this running time, we increase the number of amino acids in \code{dfAA} and \code{dfNNAA} by 2 and 5, respectively, and do the same. This procedure stops when we have compared a \code{dfAA} with 20 rows with a \code{dfNNAA} of 50 rows, to give a total of 1000 fingerprint-comparisons. Furthermore, we would like to highlight that we collect the average running time of \code{times = 20L} function calls in \code{microbenchmark}. Of course, if we set \code{times} to a larger integer value, we would get more robust results, but this will also increase the running time of the function \code{get\_grid\_of\_times} itself. 
+
+<<grid_of_times, message=FALSE, warning=FALSE>>=
+get_grid_of_times <- function(dfAA, dfNNAA) {
+  AA_seq <- seq(2, 20, 2)
+  NNAA_seq <- seq(5, 50, 5)
+  N <- min(length(AA_seq), length(NNAA_seq))
+  result <- NULL
+  
+  func_vectorized <- get_tanimoto_vectorized
+  for (i in 1:N) {
+    fp1s <- dfAA[1:AA_seq[i], ]
+    fp2s <- dfNNAA[1:NNAA_seq[i], ]
+    times <- microbenchmark(
+      "R loop" = get_tanimoto_serial(fp1s, fp2s, get_tanimoto_similarity), 
+      "R vectorized" = get_tanimoto_serial(fp1s, fp2s, func_vectorized), 
+      "bitops" = get_tanimoto_serial(fp1s, fp2s, get_tanimoto_bitops), 
+      "Rcpp" = get_tanimoto_serial(fp1s, fp2s, get_tanimoto_Rcpp), 
+      "forks" = get_tanimoto_forks(fp1s, fp2s, n_cores = 2),
+      "sockets" = get_tanimoto_sockets(fp1s, fp2s, n_cores = 2), 
+      times = 20L,
+      unit = "s"
+    )
+    
+    summary <- cbind(
+      nAA = rep(AA_seq[i], times = 6), 
+      nNNAA = rep(NNAA_seq[i], times = 6), 
+      summary(times)[, c("expr", "mean")]
+    )
+    result <- bind_rows(result, summary) 
+  }
+  result %>%
+    rename(time = mean)
+}
+
+df_times <- get_grid_of_times(dfAA, dfNNAA) %>%
+  mutate(comparisons = nAA * nNNAA)
+@
+
+Now that we have collected the running times and stored them in \code{df\_times}, we will plot these times against the total number of fingerprint comparisons. Figure \ref{fig:parallel_plot} presents the resulting plot. We observe that the running times for 1000 fingerprint comparisons are similar to the running times in Table \ref{tab:table_running_times}, as expected. Besides that, we observe that the running time for \code{get\_tanimoto\_sockets} is substantially larger than the running time for the other methods. This can be explained by the large \textit{overhead} of calling this parallel function, since already for a handful of comparisons the running time is beyond the maximum running time of the others and this stays relatively constant when increasing the number of comparisons. Note that for the sockets implementation we needed to export a function and data to the clusters, this is probably why the overhead is so large, especially in comparison with forks. Even though the \code{get\_tanimoto\_forks} also has some \textit{overhead}, we observe that this is considerably smaller than for the sockets implementation. More specifically, we observe that the forks implementation eventually performs faster than \textit{``R loop"} and \textit{``bitops"}. If we would increase the number of fingerprint-comparisons to a bit more than 1000, the forks implementation would probably also be faster than the \textit{``R vectorized"} method. Lastly, Figure \ref{fig:parallel_plot} shows that the C++ function (\textit{``Rcpp"}) is extremely efficient. If the forks implementation will eventually outperform the C++ implementation, this will probably happen for fingerprint-comparisons well exceeding 1000. 
+
+<<parallel_plot, message = FALSE, warning = FALSE, fig.height = 5, fig.width = 7, fig.pos = "H", fig.align='center', fig.cap="This figure plots the running time in seconds against the number of fingerprint-comparisons for each Tanimoto similarity function defined in this paper.", out.width = '80%'>>=
+ggplot(df_times, mapping = aes(x = comparisons, y = time, colour = expr)) + 
+  geom_point() +
+  geom_line() + 
+  labs(
+    x = "Number of comparisons", 
+    y = "Time (in seconds)", 
+    colour = "Method"
+  ) + 
+  scale_colour_manual(values = cbPalette[-1]) + 
+  theme(legend.background = element_rect(colour = "black")) 
+@
+
+To conclude this paper, we will fit linear and quadratic models to the running times in Figure \ref{fig:parallel_plot}. Table \ref{tab:model_run_time} presents the $R^2$ values obtained. We observe that the $R^2$ values for all models are large, and the differences in $R^2$ between the linear and quadratic models are very small. Therefore, the results in Table \ref{tab:model_run_time}, together with Figure \ref{fig:parallel_plot}, indicate that the complexity of all functions is linear. Of course, the rate at which the running times increase with the number of comparisons is different for each method (see Figure \ref{fig:parallel_plot}). 
+
+<<model_run_time, warning = FALSE, message = FALSE>>==
+linear_models <- tapply(
+  X = df_times, 
+  INDEX = df_times$expr, 
+  FUN = function(x) lm(time ~ comparisons, data = x)
+)
+R2_linear <- sapply(linear_models, FUN = function(x) summary(x)$r.squared)
+
+quadratic_models <- tapply(
+  X = df_times, 
+  INDEX = df_times$expr, 
+  FUN = function(x) lm(time ~ comparisons + I(comparisons^2), data = x)
+)
+R2_quad <- sapply(quadratic_models, FUN = function(x) summary(x)$r.squared)
+
+rbind(
+  "Linear" = R2_linear, 
+  "Quadratic" = R2_quad
+) %>%
+  kbl(
+    digits = 3,
+    format = "latex",
+    booktabs = TRUE,
+    linesep = "",
+    table.envir = "table} \\captionsetup{margin = 60pt", 
+    caption = paste0("$R^2$ values for the linear and quadratic model ",
+                     "regressing running time (in seconds) on the ", 
+                     "number of comparisons made for each of the ", 
+                     "methods as used in the figure above.")
+  ) %>%
+  kable_styling(latex_options = c("HOLD_position"))
+@
+
+
+
+
+
+\end{enumerate}
+
+\end{document}
+
+
